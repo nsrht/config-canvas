@@ -10,7 +10,8 @@ import {
   Undo, Redo, RotateCcw, Download, Upload,
   FileJson, Columns, ListTree, Code, Columns3, Moon, Sun, Monitor, Search
 } from 'lucide-react';
-import { cn } from './components/FormNode';
+import { cn, JsonPath } from './components/FormNode';
+import { Group, Panel, Separator } from 'react-resizable-panels';
 
 type ViewMode = 'form' | 'code' | 'split' | 'diff';
 
@@ -142,17 +143,23 @@ function AppContent({
     updateState(value, false);
   }, [updateState]);
 
-  const handleFormChange = useCallback((path: string, newValue: any) => {
+  const handleFormChange = useCallback((path: JsonPath, newValue: any) => {
     if (!currentState.isValid) return; // Ignore form changes if current state is invalid JSON
 
     // Simple update logic for form root
-    if (path === '') {
+    if (path.length === 0) {
       updateFromForm(newValue);
       return;
     }
 
-    const parts = path.split(/\.|\[|\]/).filter(Boolean);
-    const newData = setIn(currentState.parsedData, parts, newValue);
+    // Now path is already an array of strings/numbers, no need to parse it
+    // Wait, jsonUtils `setIn` was written expecting string arrays, let's make sure it handles numbers
+    // `setIn` uses `const index = parseInt(first, 10);` which works for stringified numbers,
+    // but if it receives a number directly, we can just pass it as is or map to strings for setIn.
+    // Actually, `setIn` just uses `first` to index. Let's map `path` to strings to be safe with `setIn`'s current implementation,
+    // or we can update `setIn`. For now, mapping to string is fine since JS object keys are strings anyway, and arrays handle string indices.
+    const stringPath = path.map(String);
+    const newData = setIn(currentState.parsedData, stringPath, newValue);
 
     updateFromForm(newData);
   }, [currentState, updateFromForm]);
@@ -164,8 +171,47 @@ function AppContent({
     }
   };
 
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.name.endsWith('.json')) {
+        handleFileUpload(file, (content, name) => {
+           onExampleSelect(content, name); // reusing this prop for generic loading
+        });
+      }
+    }
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans transition-colors">
+    <div
+      className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans transition-colors relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm flex items-center justify-center border-4 border-dashed border-blue-500 pointer-events-none">
+          <div className="text-blue-600 dark:text-blue-400 font-bold text-2xl flex items-center gap-2">
+            <Upload size={32} /> Drop JSON file here
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <header className="flex flex-wrap items-center justify-between px-4 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm gap-2">
         <div className="flex items-center gap-4">
@@ -251,7 +297,7 @@ function AppContent({
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+      <main className="flex-1 overflow-hidden relative flex">
 
          {/* Invalid Warning overlay for Form view */}
          {!currentState.isValid && (viewMode === 'form' || viewMode === 'split') && (
@@ -261,54 +307,87 @@ function AppContent({
             </div>
          )}
 
-         {(viewMode === 'form' || viewMode === 'split') && (
-            <div className={cn("flex flex-col h-full overflow-auto bg-white dark:bg-gray-800 p-4 relative", viewMode === 'split' ? "w-1/2 border-r border-gray-200 dark:border-gray-700" : "w-full")}>
-
-               <div className="mb-4 relative">
-                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                   <Search className="h-4 w-4 text-gray-400" />
-                 </div>
-                 <input
-                   type="text"
-                   placeholder="Search field, path, or value..."
-                   value={searchQuery}
-                   onChange={(e) => setSearchQuery(e.target.value)}
-                   className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md leading-5 bg-white dark:bg-gray-700 placeholder-gray-500 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+         {viewMode === 'split' && !isMobile ? (
+            <Group orientation="horizontal" className="w-full h-full">
+              <Panel defaultSize={50} minSize={20} className="flex flex-col bg-white dark:bg-gray-800 p-4 relative">
+                 <FormContent
+                   searchQuery={searchQuery}
+                   setSearchQuery={setSearchQuery}
+                   currentState={currentState}
+                   handleFormChange={handleFormChange}
+                 />
+              </Panel>
+              <Separator className="w-2 bg-gray-200 dark:bg-gray-700 hover:bg-blue-400 dark:hover:bg-blue-600 transition-colors cursor-col-resize flex items-center justify-center">
+                <div className="h-8 w-1 bg-gray-400 dark:bg-gray-500 rounded-full" />
+              </Separator>
+              <Panel defaultSize={50} minSize={20} className="h-full relative bg-white dark:bg-gray-900 overflow-hidden">
+                <JsonEditor codeText={currentState.text} onChange={handleEditorChange} isDarkTheme={isDarkMode} />
+              </Panel>
+            </Group>
+         ) : (
+           <div className="flex-1 w-full h-full flex flex-col relative overflow-hidden">
+             {viewMode === 'form' && (
+               <div className="flex flex-col h-full bg-white dark:bg-gray-800 p-4 relative overflow-auto">
+                 <FormContent
+                   searchQuery={searchQuery}
+                   setSearchQuery={setSearchQuery}
+                   currentState={currentState}
+                   handleFormChange={handleFormChange}
                  />
                </div>
+             )}
 
-               {!currentState.isValid && (
-                 <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 z-0 pointer-events-none mt-14"></div>
-               )}
-               <div className={cn("flex-1", !currentState.isValid && "pointer-events-none opacity-60")}>
-                  {currentState.parsedData !== null && currentState.parsedData !== undefined ? (
-                    <FormNode
-                      path=""
-                      value={currentState.parsedData}
-                      onChange={handleFormChange}
-                      isRoot={true}
-                      searchQuery={searchQuery}
-                    />
-                  ) : (
-                    <div className="text-gray-500 italic p-4">No valid data to display.</div>
-                  )}
+             {viewMode === 'code' && (
+               <div className="w-full h-full">
+                 <JsonEditor codeText={currentState.text} onChange={handleEditorChange} isDarkTheme={isDarkMode} />
                </div>
-            </div>
-         )}
+             )}
 
-         {(viewMode === 'code' || viewMode === 'split') && (
-            <div className={cn("h-full", viewMode === 'split' ? "w-1/2" : "w-full")}>
-              <JsonEditor codeText={currentState.text} onChange={handleEditorChange} isDarkTheme={isDarkMode} />
-            </div>
-         )}
-
-         {viewMode === 'diff' && (
-            <div className="w-full h-full p-4 bg-gray-100 dark:bg-gray-900 overflow-hidden">
-               <DiffView originalText={initialText} currentText={currentState.isValid ? stringifyJson(currentState.parsedData) : currentState.text} isInvalid={!currentState.isValid} />
-            </div>
+             {viewMode === 'diff' && (
+               <div className="w-full h-full p-4 bg-gray-100 dark:bg-gray-900 overflow-hidden">
+                  <DiffView originalText={initialText} currentText={currentState.isValid ? stringifyJson(currentState.parsedData) : currentState.text} isInvalid={!currentState.isValid} />
+               </div>
+             )}
+           </div>
          )}
 
       </main>
     </div>
   );
+}
+
+function FormContent({ searchQuery, setSearchQuery, currentState, handleFormChange }: any) {
+  return (
+    <>
+       <div className="mb-4 relative shrink-0">
+         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+           <Search className="h-4 w-4 text-gray-400" />
+         </div>
+         <input
+           type="text"
+           placeholder="Search field, path, or value..."
+           value={searchQuery}
+           onChange={(e) => setSearchQuery(e.target.value)}
+           className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md leading-5 bg-white dark:bg-gray-700 placeholder-gray-500 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+         />
+       </div>
+
+       {!currentState.isValid && (
+         <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 z-0 pointer-events-none mt-14"></div>
+       )}
+       <div className={cn("flex-1 overflow-auto", !currentState.isValid && "pointer-events-none opacity-60")}>
+          {currentState.parsedData !== null && currentState.parsedData !== undefined ? (
+            <FormNode
+              path={[]}
+              value={currentState.parsedData}
+              onChange={handleFormChange}
+              isRoot={true}
+              searchQuery={searchQuery}
+            />
+          ) : (
+            <div className="text-gray-500 italic p-4">No valid data to display.</div>
+          )}
+       </div>
+    </>
+  )
 }

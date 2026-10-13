@@ -12,12 +12,14 @@ export function cn(...inputs: (string | undefined | null | false)[]) {
 
 export type JsonValue = any;
 
+export type JsonPath = (string | number)[];
+
 interface BaseProps {
   name?: string;
-  path: string;
+  path: JsonPath;
   value: JsonValue;
-  onChange: (path: string, newValue: JsonValue) => void;
-  onDelete?: (path: string) => void;
+  onChange: (path: JsonPath, newValue: JsonValue) => void;
+  onDelete?: (path: JsonPath) => void;
   isRoot?: boolean;
   searchQuery?: string;
 }
@@ -28,11 +30,13 @@ export function FormNode({ name, path, value, onChange, onDelete, isRoot, search
   const normalizedQuery = searchQuery.toLowerCase();
 
   // Basic search matching on name, path, or scalar values
+  const stringifiedPath = useMemo(() => path.join('.'), [path]);
+
   const matchesSearch = useMemo(() => {
     if (!normalizedQuery) return true;
 
     if (name && name.toLowerCase().includes(normalizedQuery)) return true;
-    if (path && path.toLowerCase().includes(normalizedQuery)) return true;
+    if (stringifiedPath && stringifiedPath.toLowerCase().includes(normalizedQuery)) return true;
 
     if (value === null && 'null'.includes(normalizedQuery)) return true;
     if (typeof value === 'boolean' && value.toString().includes(normalizedQuery)) return true;
@@ -103,9 +107,10 @@ export function FormNode({ name, path, value, onChange, onDelete, isRoot, search
   return <div>Unknown type for {name || path}</div>;
 }
 
-function deepMatch(value: any, query: string, path: string): boolean {
+function deepMatch(value: any, query: string, path: JsonPath): boolean {
   if (!query) return true;
-  if (path.toLowerCase().includes(query)) return true;
+  const pathStr = path.join('.');
+  if (pathStr.toLowerCase().includes(query)) return true;
 
   if (value === null) return 'null'.includes(query);
   if (typeof value === 'boolean') return value.toString().includes(query);
@@ -113,10 +118,10 @@ function deepMatch(value: any, query: string, path: string): boolean {
   if (typeof value === 'number' || isLosslessNumber(value)) return value.toString().includes(query);
 
   if (Array.isArray(value)) {
-    return value.some((v, i) => deepMatch(v, query, `${path}[${i}]`));
+    return value.some((v, i) => deepMatch(v, query, [...path, i]));
   }
-  if (typeof value === 'object') {
-    return Object.entries(value).some(([k, v]) => k.toLowerCase().includes(query) || deepMatch(v, query, `${path}.${k}`));
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).some(([k, v]) => k.toLowerCase().includes(query) || deepMatch(v, query, [...path, k]));
   }
 
   return false;
@@ -151,8 +156,8 @@ function ObjectNode({ name, path, value, onChange, onDelete, isExpanded, setIsEx
 
   const hasMatchingChildren = useMemo(() => {
     if (!normalizedQuery) return true;
-    return deepMatch(value, normalizedQuery, path || name || '');
-  }, [value, normalizedQuery, path, name]);
+    return deepMatch(value, normalizedQuery, path);
+  }, [value, normalizedQuery, path]);
 
   if (normalizedQuery && !matchesSearch && !hasMatchingChildren) {
     return null;
@@ -161,13 +166,13 @@ function ObjectNode({ name, path, value, onChange, onDelete, isExpanded, setIsEx
   // Auto-expand if searching and there are matches inside
   const shouldExpand = searchQuery ? true : isExpanded;
 
-  const handleChildChange = (childPath: string, newValue: JsonValue) => {
-    const key = childPath.split('.').pop()!;
+  const handleChildChange = (childPath: JsonPath, newValue: JsonValue) => {
+    const key = childPath[childPath.length - 1];
     onChange(path, { ...value, [key]: newValue });
   };
 
-  const handleChildDelete = (childPath: string) => {
-    const key = childPath.split('.').pop()!;
+  const handleChildDelete = (childPath: JsonPath) => {
+    const key = childPath[childPath.length - 1] as string;
     const newValue = { ...value };
     delete newValue[key];
     onChange(path, newValue);
@@ -204,7 +209,7 @@ function ObjectNode({ name, path, value, onChange, onDelete, isExpanded, setIsEx
             <FormNode
               key={key}
               name={key}
-              path={path ? `${path}.${key}` : key}
+              path={[...path, key]}
               value={value[key]}
               onChange={handleChildChange}
               onDelete={handleChildDelete}
@@ -228,8 +233,8 @@ function ArrayNode({ name, path, value, onChange, onDelete, isExpanded, setIsExp
 
   const hasMatchingChildren = useMemo(() => {
     if (!normalizedQuery) return true;
-    return deepMatch(value, normalizedQuery, path || name || '');
-  }, [value, normalizedQuery, path, name]);
+    return deepMatch(value, normalizedQuery, path);
+  }, [value, normalizedQuery, path]);
 
   if (normalizedQuery && !matchesSearch && !hasMatchingChildren) {
     return null;
@@ -286,7 +291,7 @@ function ArrayNode({ name, path, value, onChange, onDelete, isExpanded, setIsExp
             <div key={index} className="flex group/item items-start gap-2 mb-2">
               <div className="flex-1 w-full min-w-0">
                 <FormNode
-                  path={`${path}[${index}]`}
+                  path={[...path, index]}
                   value={item}
                   onChange={(p, val) => handleItemChange(index, val)}
                   searchQuery={searchQuery}
