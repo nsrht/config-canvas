@@ -49,5 +49,14 @@ The output will be generated in the `dist` folder.
 ## Deployment
 ConfigCanvas is a purely static site. After running `npm run build`, you can deploy the contents of the `dist` directory to any static file host like GitHub Pages, Vercel, Netlify, or Amazon S3. No backend or database is required.
 
+### GitHub Pages Setup
+This repository includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that automatically builds and deploys the application to GitHub Pages whenever you push to the `main` branch.
+
+To enable this:
+1. Go to your repository **Settings** on GitHub.
+2. Navigate to **Pages** on the left sidebar.
+3. Under **Build and deployment**, change the **Source** to **GitHub Actions**.
+4. The workflow will automatically run and publish your site to `https://<your-username>.github.io/config-canvas/`.
+
 ## License
 MIT
